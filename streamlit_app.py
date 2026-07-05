@@ -477,11 +477,15 @@ st.caption(
 st.markdown(
     """
     <style>
-    /* Widen the sidebar so the Search-by-name prompt fits on one line and the
-       Region/Council/Zone/Area filter chips fit on the first line at start. */
-    section[data-testid="stSidebar"] {
-        width: 420px !important;
-        min-width: 420px !important;
+    /* On larger screens widen the sidebar so the Search-by-name prompt fits on
+       one line and the Region/Council/Zone/Area filter chips fit on the first
+       line. Left at Streamlit's responsive default on small/mobile screens so
+       it doesn't overflow a narrow viewport. */
+    @media (min-width: 768px) {
+        section[data-testid="stSidebar"] {
+            width: 420px !important;
+            min-width: 420px !important;
+        }
     }
     /* Descendant (not direct-child) combinators so rows with a help tooltip --
        which Streamlit wraps in stTooltipHoverTarget -- are tightened too. */
