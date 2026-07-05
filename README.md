@@ -57,6 +57,20 @@ both `child-spoids` and `parent-spoids` (so it reaches Societies, Technical
 Councils, and Divisions as well as the geographic hierarchy), writing every
 **active** unit. A full crawl is ~20k+ units in a couple of minutes.
 
+## Checking parent/child reciprocity
+
+`check_reciprocity.py` uses the same crawl to audit the OU List data for
+non-reciprocal relationships -- a parent whose `child-spoids` omits a unit that
+names it as a parent, or a child whose `parent-spoids` omits a unit that names
+it as a child. It writes the findings (active units only, R0/R10 treated as one
+unit) to a CSV:
+
+```bash
+python check_reciprocity.py --out reciprocity_violations.csv
+```
+
+The output CSV is a diagnostic snapshot and is not committed to the repo.
+
 ## Running locally
 
 ```bash
@@ -106,6 +120,7 @@ Then open the URL Streamlit prints (usually http://localhost:8501).
 | `outype.py`        | Unit-type classification and per-type colour/shape/emoji    |
 | `build_index.py`   | Crawls the OU graph to build the `units.csv` search index   |
 | `units.csv`        | Pre-built name-search index (active units: spoid, name, type) |
+| `check_reciprocity.py` | Audits OU List data for non-reciprocal parent/child links |
 
 ## Notes and known quirks
 
