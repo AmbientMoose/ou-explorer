@@ -7,7 +7,8 @@ env/
 *.egg-info/
 .DS_Store
 
-# Generated diagnostic snapshot from check_reciprocity.py (csv/xlsx), and the
-# renamed script copy used for email attachments.
-reciprocity_violations.*
+# The .xlsx report and renamed script copy are local email artifacts; the
+# reciprocity_violations.csv IS committed (the app uses it to supplement the
+# OU List API's parent/child data).
+reciprocity_violations.xlsx
 check_reciprocity.py.txt

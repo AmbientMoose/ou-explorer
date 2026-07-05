@@ -38,6 +38,12 @@ _INDEX_PATH = Path(__file__).parent / "units.csv"
 _SEARCH_MIN_CHARS = 3
 _SEARCH_LIMIT = 50
 
+# Known parent/child edges the OU List API omits; used to supplement the API's
+# relationship data. See check_reciprocity.py. A committed snapshot.
+_RECIP_PATH = Path(__file__).parent / "reciprocity_violations.csv"
+# Marks parent/child rows that came from the supplement rather than the API.
+_SUPP_MARK = " †"  # dagger
+
 logging.basicConfig(level=logging.INFO)
 
 st.set_page_config(page_title="IEEE OU Explorer", page_icon="🌐",
@@ -64,12 +70,64 @@ def resolve_spoid(spoid):
     return "R0" if spoid == "R10" else spoid
 
 
-def self_ids(spoid):
-    """Identifiers that count as 'this unit', including the R0/R10 alias."""
-    ids = {spoid}
-    if spoid in ("R0", "R10"):
-        ids |= {"R0", "R10"}
-    return ids
+@st.cache_data(show_spinner=False)
+def load_supplements():
+    """Load reciprocity_violations.csv into edge-supplement maps.
+
+    Returns (extra_children, extra_parents, info):
+      extra_children[parent_spoid] -> [child spoids the API omits]
+      extra_parents[child_spoid]   -> [parent spoids the API omits]
+      info[spoid]                  -> (name, type_desc, status) from the CSV,
+                                      so supplemented units need not be fetched.
+    SPOIDs are normalized for the R0/R10 alias.
+    """
+    extra_children, extra_parents, info = {}, {}, {}
+    if not _RECIP_PATH.exists():
+        return extra_children, extra_parents, info
+    with open(_RECIP_PATH, newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            unit = resolve_spoid((r.get("unit_spoid") or "").strip())
+            related = resolve_spoid((r.get("related_spoid") or "").strip())
+            issue = r.get("issue") or ""
+            if not unit or not related:
+                continue
+            info.setdefault(unit, (r.get("unit_name", ""),
+                                   r.get("unit_type", ""),
+                                   r.get("unit_status", "")))
+            info.setdefault(related, (r.get("related_name", ""),
+                                      r.get("related_type", ""),
+                                      r.get("related_status", "")))
+            if issue.startswith("parent"):      # parent 'related' omits 'unit'
+                extra_children.setdefault(related, [])
+                if unit not in extra_children[related]:
+                    extra_children[related].append(unit)
+            elif issue.startswith("child"):      # child 'related' omits 'unit'
+                extra_parents.setdefault(related, [])
+                if unit not in extra_parents[related]:
+                    extra_parents[related].append(unit)
+    return extra_children, extra_parents, info
+
+
+def supplement_ou(spoid):
+    """Build a lightweight OU for a supplemented unit from CSV info, or None."""
+    _ec, _ep, info = load_supplements()
+    row = info.get(resolve_spoid(spoid))
+    if row is None:
+        return None
+    name, type_desc, status = row
+    return OU(spoid=spoid, name=name, type_desc=type_desc, status_desc=status)
+
+
+def merge_supplement(base_spoids, extra_spoids):
+    """Append supplement SPOIDs not already present; return (list, added_set).
+
+    'added_set' holds the normalized SPOIDs that came from the supplement, so
+    callers can mark those rows.
+    """
+    present = {resolve_spoid(s) for s in base_spoids}
+    added = [s for s in extra_spoids if resolve_spoid(s) not in present]
+    added_ids = {resolve_spoid(s) for s in added}
+    return list(base_spoids) + added, added_ids
 
 
 def name_of(spoid, ou_cache):
@@ -95,25 +153,6 @@ def is_inactive(spoid, ou_cache):
     """
     ou = ou_cache.get(spoid)
     return ou is not None and (ou.status_desc or "").lower() == "inactive"
-
-
-def reciprocity_flag(spoid, ou_cache, current_ids, relation):
-    """Return a warning message if the relationship isn't mutual, else None.
-
-    'parent' relation: the parent should list the current unit as a child.
-    'child'  relation: the child should list the current unit as a parent.
-    Units we never fetched (SPOID-only codes) can't be verified -> no flag.
-    """
-    ou = ou_cache.get(spoid)
-    if ou is None:  # None (no data) or never queried -> cannot verify
-        return None
-    if relation == "parent" and current_ids.isdisjoint(ou.children):
-        return ("This parent does not list the current unit among its "
-                "children.")
-    if relation == "child" and current_ids.isdisjoint(ou.parents):
-        return ("This child does not list the current unit among its "
-                "parents.")
-    return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -153,12 +192,32 @@ def load_index():
             name = (r.get("name") or "").strip()
             if not spoid or not name:
                 continue
+            type_desc = (r.get("type") or "").strip()
             _c, _s, emoji, _z = outype.style_for(
-                outype.classify_ou(OU(spoid=spoid, type_desc=r.get("type", ""))))
-            rows.append({"spoid": spoid, "name": name,
+                outype.classify_ou(OU(spoid=spoid, type_desc=type_desc)))
+            rows.append({"spoid": spoid, "name": name, "type": type_desc,
                          "name_lower": name.lower(),
                          "label": f"{emoji} {name} ({spoid})"})
     return rows
+
+
+@st.cache_data(show_spinner=False)
+def index_lookup():
+    """Map (normalized) SPOID -> (name, type) for all active units in the index.
+
+    Used to resolve a listed unit's name/type without an API call. A SPOID
+    absent from the index is treated as inactive (dropped from the lists).
+    """
+    return {resolve_spoid(r["spoid"]): (r["name"], r["type"])
+            for r in load_index()}
+
+
+def neighbor_ou(spoid):
+    """Lightweight OU for a listed unit from the index, or None if absent."""
+    row = index_lookup().get(resolve_spoid(spoid))
+    if row is None:
+        return None
+    return OU(spoid=spoid, name=row[0], type_desc=row[1], status_desc="Active")
 
 
 def search_units(query):
@@ -179,27 +238,23 @@ def search_units(query):
 def init_state():
     if "current" not in st.session_state:
         st.session_state.current = None
-        st.session_state.ou_cache = {}
         st.session_state.view = "main"
         st.session_state.last_search = None
 
 
-def fetch_ous(spoids):
-    """Fetch full OUs for fetchable SPOIDs concurrently, cached per session.
+def neighbor_cache(spoids, supp_ids):
+    """Resolve listed units' name/type without fetching.
 
-    The full OU is kept (not just its name) so each listed unit's own
-    parent/child lists are available for the reciprocity check.
+    Supplemented units come from the reciprocity CSV; everything else from the
+    units.csv index. A SPOID in neither is None -> treated as inactive and
+    dropped from the lists.
     """
-    cache = st.session_state.ou_cache
-    todo = [s for s in dict.fromkeys(spoids)
-            if name_fetchable(s) and s not in cache]
-    if not todo:
-        return cache
-    with concurrent.futures.ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
-        results = pool.map(lambda s: ouclient.get_ou(s, http=_HTTP), todo)
-        for spoid, ou in zip(todo, results):
-            # None => API returned no data (unit is dropped from the lists).
-            cache[spoid] = ou
+    cache = {}
+    for spoid in dict.fromkeys(spoids):
+        if resolve_spoid(spoid) in supp_ids:
+            cache[spoid] = supplement_ou(spoid) or neighbor_ou(spoid)
+        else:
+            cache[spoid] = neighbor_ou(spoid)
     return cache
 
 
@@ -263,14 +318,14 @@ def on_region_change():
     load_from_fields()
 
 
-def nav_row(spoid, unit_type, name, sort_by, flag, key):
+def nav_row(spoid, unit_type, name, sort_by, supplemented, key):
     """Render one compact, clickable parent/child row.
 
     Label order follows the sort: "(SPOID) Name" when sorted by SPOID,
     "Name (SPOID)" when sorted by unit name. A leading emoji marks the type
     (see the sidebar legend). Rendered as a borderless (tertiary) button so
-    rows are single-line and single-spaced rather than boxed. A trailing
-    warning marks a non-reciprocal relationship (see reciprocity_flag).
+    rows are single-line and single-spaced rather than boxed. A trailing dagger
+    marks a relationship added from the reciprocity supplement.
     """
     _colour, _shape, emoji, _size = outype.style_for(unit_type)
     if name:
@@ -278,10 +333,13 @@ def nav_row(spoid, unit_type, name, sort_by, flag, key):
     else:
         text = f"({spoid})"
     label = f"{emoji} {text}"
-    if flag:
-        label += " ⚠️"
+    help_text = None
+    if supplemented:
+        label += _SUPP_MARK
+        help_text = ("Added from reciprocity data; the OU List API does not "
+                     "return this relationship.")
     st.button(label, key=key, type="tertiary", use_container_width=False,
-              on_click=go_to, args=(spoid,), help=flag or None)
+              on_click=go_to, args=(spoid,), help=help_text)
 
 
 def legend_markdown():
@@ -321,11 +379,12 @@ def hidden_breakdown(hidden_types):
     return ", ".join(_plural(t, c) for t, c in items)
 
 
-def render_unit_list(title, spoids, hints, ou_cache, current_ids, relation,
-                     visible_types, sort_by, key_prefix):
+def render_unit_list(title, spoids, hints, ou_cache, visible_types, sort_by,
+                     key_prefix, supp_ids=frozenset()):
     st.subheader(title)
-    # Includable = real (has data) and active; of those, some may be hidden
-    # solely because their type is not in the current filter.
+    # Includable = present in the index/supplement (active); of those, some may
+    # be hidden solely because their type is not in the current filter. A unit
+    # absent from the index is treated as inactive and dropped (has_data False).
     candidates = [s for s in spoids
                   if has_data(s, ou_cache) and not is_inactive(s, ou_cache)]
     typed = [(s, type_for(s, hints, ou_cache)) for s in candidates]
@@ -337,11 +396,16 @@ def render_unit_list(title, spoids, hints, ou_cache, current_ids, relation,
     if not candidates:
         st.caption("None.")
     else:
+        any_supp = False
         for i, spoid in enumerate(shown):
-            flag = reciprocity_flag(spoid, ou_cache, current_ids, relation)
+            supplemented = resolve_spoid(spoid) in supp_ids
+            any_supp = any_supp or supplemented
             nav_row(spoid, type_for(spoid, hints, ou_cache),
-                    name_of(spoid, ou_cache), sort_by, flag,
+                    name_of(spoid, ou_cache), sort_by, supplemented,
                     key=f"{key_prefix}_{i}_{spoid}")
+        if any_supp:
+            st.caption(f"{_SUPP_MARK.strip()} added from the reciprocity "
+                       "supplement (not returned by the OU List API).")
         if hidden:
             word = "unit" if hidden == 1 else "units"
             st.caption(f"{hidden} {word} hidden by the type filter "
@@ -413,17 +477,23 @@ st.caption(
 st.markdown(
     """
     <style>
-    div[data-testid="stButton"] > button[kind="tertiary"] {
+    /* Descendant (not direct-child) combinators so rows with a help tooltip --
+       which Streamlit wraps in stTooltipHoverTarget -- are tightened too. */
+    div[data-testid="stButton"] button[kind="tertiary"] {
         padding: 0.05rem 0.2rem;
         min-height: 0;
         line-height: 1.35;
         text-align: left;
         justify-content: flex-start;
     }
-    div[data-testid="stElementContainer"]:has(> div[data-testid="stButton"]
-        > button[kind="tertiary"]) {
+    div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]
+        button[kind="tertiary"]) {
         margin-top: -0.55rem;
         margin-bottom: -0.55rem;
+    }
+    /* Neutralize the tooltip wrapper's own spacing on these rows. */
+    div[data-testid="stButton"] [data-testid="stTooltipHoverTarget"] {
+        display: block;
     }
     /* Officers: style the button as a hyperlink so it's obviously clickable,
        matching the Website / OU List API links above it. */
@@ -460,7 +530,6 @@ with st.sidebar:
                  on_click=load_from_fields)
     if col_b.button("Reset", use_container_width=True):
         st.session_state.current = None
-        st.session_state.ou_cache = {}
 
     # Type-ahead search by unit name (>=3 letters), backed by units.csv.
     if load_index():
@@ -497,7 +566,7 @@ current = st.session_state.current
 
 if not current:
     st.info("Pick a Region (or enter a SPOID) in the sidebar and press "
-            "**Load** to begin.")
+            "**Load** to begin, or use **Search by name** to find a unit.")
 else:
     ou = load_ou(resolve_spoid(current))
     if ou is None:
@@ -506,13 +575,21 @@ else:
         render_officers_page(ou)
     else:
         hints = hint_map(ou)
-        with st.spinner("Loading unit names..."):
-            ou_cache = fetch_ous(ou.parents + ou.children)
-        current_ids = self_ids(ou.spoid)
+        # Supplement the API's parent/child lists with known-omitted edges.
+        extra_children, extra_parents, _info = load_supplements()
+        parents_list, parent_supp = merge_supplement(
+            ou.parents, extra_parents.get(resolve_spoid(ou.spoid), []))
+        children_list, child_supp = merge_supplement(
+            ou.children, extra_children.get(resolve_spoid(ou.spoid), []))
+        supp_all = parent_supp | child_supp
 
-        render_unit_list("Parents", ou.parents, hints, ou_cache, current_ids,
-                         "parent", visible_types, sort_by, "par")
+        # Resolve every listed unit's name/type from the index + supplement --
+        # no per-neighbour API calls. Units absent from both are dropped.
+        ou_cache = neighbor_cache(parents_list + children_list, supp_all)
+
+        render_unit_list("Parents", parents_list, hints, ou_cache,
+                         visible_types, sort_by, "par", parent_supp)
         render_selected(ou)
-        render_unit_list(f"Children ({len(ou.children)})", ou.children, hints,
-                         ou_cache, current_ids, "child", visible_types,
-                         sort_by, "chi")
+        render_unit_list(f"Children ({len(children_list)})", children_list,
+                         hints, ou_cache, visible_types, sort_by, "chi",
+                         child_supp)

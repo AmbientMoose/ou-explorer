@@ -26,9 +26,11 @@ GET https://vtools.vtools.ieee.org/api/public/v1/ous/list?spoid=<SPOID>
 
 A single call returns, for one OU, both its `parent-spoids` and `child-spoids`
 plus type/status metadata and precomputed region/section/society/division
-ancestry. Navigating to an OU costs one API call for that OU, plus one cached
-call per listed parent/child to resolve its name (see below). Responses are
-cached in memory for the session.
+ancestry. Navigating to an OU costs just **one** API call -- for that OU. The
+listed parents' and children's names and types are resolved from the committed
+`units.csv` index (below), not fetched, so even a society with ~1,000 chapters
+loads quickly. A listed unit that isn't in `units.csv` is treated as inactive
+and dropped.
 
 Each parent/child row shows an emoji + SPOID + name, where the emoji encodes
 the unit type (see the sidebar legend).
@@ -63,13 +65,17 @@ Councils, and Divisions as well as the geographic hierarchy), writing every
 non-reciprocal relationships -- a parent whose `child-spoids` omits a unit that
 names it as a parent, or a child whose `parent-spoids` omits a unit that names
 it as a child. It writes the findings (active units only, R0/R10 treated as one
-unit) to a CSV:
+unit) to `reciprocity_violations.csv`:
 
 ```bash
 python check_reciprocity.py --out reciprocity_violations.csv
 ```
 
-The output CSV is a diagnostic snapshot and is not committed to the repo.
+That CSV is **committed** and the app uses it to **supplement** the OU List
+API's parent/child data: because the API's `child-spoids` lists are known to be
+incomplete, the app adds the omitted relationships from this file when showing a
+unit's parents and children. Supplemented rows are marked with a dagger (`†`).
+Re-run the script and commit the refreshed CSV to update the supplement.
 
 ## Running locally
 
@@ -96,11 +102,10 @@ Then open the URL Streamlit prints (usually http://localhost:8501).
   live-narrowing list of active units whose name contains that text; pick one
   to jump to it. Prefix matches rank first.
 - **Navigate:** click any parent or child row to move to that unit.
-- **Reciprocity flag (⚠️):** a row is flagged when the relationship isn't
-  mutual -- a listed parent that doesn't list the current unit among its
-  children, or a listed child that doesn't list it among its parents. Hover the
-  row for the reason. (Units the API returns no data for can't be checked, so
-  they're never flagged.)
+- **Supplemented rows (†):** the parent/child lists are completed with edges the
+  OU List API omits, taken from `reciprocity_violations.csv`. Rows added this
+  way are marked with a dagger and a hover note. (For example, viewing IEEE
+  Computer Society shows ~1,090 chapters instead of the ~120 the API returns.)
 - **Filter:** use *Show unit types* in the sidebar to hide clutter (e.g. show
   only Sections and Chapters) -- handy because a full Region has hundreds of
   child units. "Other" and "Grouping" units are hidden by default. When units
@@ -121,6 +126,7 @@ Then open the URL Streamlit prints (usually http://localhost:8501).
 | `build_index.py`   | Crawls the OU graph to build the `units.csv` search index   |
 | `units.csv`        | Pre-built name-search index (active units: spoid, name, type) |
 | `check_reciprocity.py` | Audits OU List data for non-reciprocal parent/child links |
+| `reciprocity_violations.csv` | Committed audit output; supplements the API's parent/child data |
 
 ## Notes and known quirks
 
