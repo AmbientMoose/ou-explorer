@@ -62,8 +62,8 @@ Then open the URL Streamlit prints (usually http://localhost:8501).
 - **Reciprocity flag (⚠️):** a row is flagged when the relationship isn't
   mutual -- a listed parent that doesn't list the current unit among its
   children, or a listed child that doesn't list it among its parents. Hover the
-  row for the reason. (SPOID-only codes that are never queried can't be
-  checked, so they're never flagged.)
+  row for the reason. (Units the API returns no data for can't be checked, so
+  they're never flagged.)
 - **Filter:** use *Show unit types* in the sidebar to hide clutter (e.g. show
   only Sections and Chapters) -- handy because a full Region has hundreds of
   child units. "Other" and "Grouping" units are hidden by default. When units
@@ -93,14 +93,12 @@ Then open the URL Streamlit prints (usually http://localhost:8501).
 - **Other SPOIDs:** a handful of units have a type that doesn't match a known
   category. They fall back to a neutral "Other" type (hidden by default in the
   filter). Known types include Region, Council, Zone, Area, Section,
-  Sub-section, Chapter, Affinity Group, Student Branch (+ Chapter/Affinity),
-  Society / Technical Council, Division, and Grouping.
-- **Names not fetched for some codes:** SPOIDs that begin with "A" followed by
-  a digit (legacy affinity codes like `A2249`) or digits followed by a dash
-  (like `1-877HNR2`) are shown as SPOID only -- their names are not looked up.
+  Sub-section, Local Group, Chapter, Affinity Group, Student Branch
+  (+ Chapter/Affinity), Academic, Society / Technical Council, Division,
+  Committee, Board, Community, and Grouping. Grouping, Academic, and Other are
+  hidden by default.
 - **No-data units dropped:** a listed parent/child whose OU List API response
-  contains no data is omitted from the lists. (The SPOID-only codes above are
-  never queried, so they are kept.)
+  contains no data is omitted from the lists.
 - **Inactive units dropped:** a listed parent/child whose status-description is
   "Inactive" is omitted from the lists.
 

@@ -20,7 +20,6 @@ Deploy:       point Streamlit Community Cloud at this file.
 
 import concurrent.futures
 import logging
-import re
 
 import streamlit as st
 import urllib3
@@ -40,16 +39,14 @@ st.set_page_config(page_title="IEEE OU Explorer", page_icon="🌐",
 _MAX_WORKERS = 8
 _HTTP = urllib3.PoolManager(maxsize=_MAX_WORKERS)
 
-# SPOIDs whose names we must NOT fetch: "A" + digit (e.g. A2249) or
-# digits + dash (e.g. 1-877HNR2). Shown as SPOID only.
-_NO_NAME_RE = re.compile(r"^(A\d|\d+-)")
-
 # Sentinel: name cache miss (never queried) vs. cached None (queried, no data).
 _MISSING = object()
 
 
 def name_fetchable(spoid):
-    return bool(spoid) and not _NO_NAME_RE.match(spoid)
+    # Every unit is fetched now (Academic codes like A8636 / 1-SG21PW carry real
+    # university names worth resolving).
+    return bool((spoid or "").strip())
 
 
 def resolve_spoid(spoid):
@@ -382,6 +379,15 @@ st.markdown(
         margin-top: -0.55rem;
         margin-bottom: -0.55rem;
     }
+    /* Officers: style the button as a hyperlink so it's obviously clickable,
+       matching the Website / OU List API links above it. */
+    .st-key-officers_link { margin-top: 0 !important; margin-bottom: 0 !important; }
+    .st-key-officers_link button[kind="tertiary"] {
+        color: #00629B !important;
+        text-decoration: underline !important;
+        padding: 0 !important;
+    }
+    .st-key-officers_link button[kind="tertiary"]:hover { color: #004b75 !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -413,9 +419,10 @@ with st.sidebar:
     st.divider()
     st.header("Filter")
     all_types = list(UnitType)
-    # Hidden by default: "Other" (obsolete/typo SPOIDs) and "Grouping" (numerous
-    # region-level society groupings that clutter the lists). Enable as needed.
-    hidden_by_default = {UnitType.UNKNOWN, UnitType.GROUPING}
+    # Hidden by default: "Other" (obsolete/typo SPOIDs), plus the numerous
+    # Grouping and Academic units that clutter the lists. Enable as needed.
+    hidden_by_default = {UnitType.UNKNOWN, UnitType.GROUPING,
+                         UnitType.ACADEMIC}
     chosen = st.multiselect(
         "Show unit types",
         options=[t.value for t in all_types],

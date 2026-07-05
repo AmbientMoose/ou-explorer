@@ -22,13 +22,18 @@ class UnitType(Enum):
     AREA = "Area"
     SECTION = "Section"
     SUBSECTION = "Sub-section"
+    LOCAL_GROUP = "Local Group"
     CHAPTER = "Chapter"
     AFFINITY = "Affinity Group"
     STUDENT_BRANCH = "Student Branch"
     STUDENT_BRANCH_CHAPTER = "Student Branch Chapter"
     STUDENT_BRANCH_AFFINITY = "Student Branch Affinity"
+    ACADEMIC = "Academic"
     SOCIETY = "Society / Technical Council"
     DIVISION = "Division"
+    COMMITTEE = "Committee"
+    BOARD = "Board"
+    COMMUNITY = "Community"
     GROUPING = "Grouping"
     UNKNOWN = "Other"
 
@@ -41,13 +46,18 @@ STYLE = {
     UnitType.AREA: ("#3949ab", "dot", "🗺️", 22),
     UnitType.SECTION: ("#2e7d32", "dot", "📍", 24),
     UnitType.SUBSECTION: ("#66bb6a", "dot", "📌", 20),
+    UnitType.LOCAL_GROUP: ("#00acc1", "dot", "🏘️", 18),
     UnitType.CHAPTER: ("#e8710a", "square", "⚙️", 18),
     UnitType.AFFINITY: ("#8e44ad", "triangle", "🤝", 18),
     UnitType.STUDENT_BRANCH: ("#c0392b", "star", "🎓", 18),
     UnitType.STUDENT_BRANCH_CHAPTER: ("#8d6e63", "square", "🎓", 16),
     UnitType.STUDENT_BRANCH_AFFINITY: ("#d81b60", "triangle", "🎓", 16),
+    UnitType.ACADEMIC: ("#5c6bc0", "square", "🏫", 18),
     UnitType.SOCIETY: ("#34495e", "diamond", "🔬", 24),
     UnitType.DIVISION: ("#7f8c8d", "diamond", "🗂️", 24),
+    UnitType.COMMITTEE: ("#546e7a", "square", "📋", 18),
+    UnitType.BOARD: ("#455a64", "square", "🏢", 18),
+    UnitType.COMMUNITY: ("#5e35b1", "dot", "🫂", 18),
     UnitType.GROUPING: ("#00897b", "diamond", "🧩", 18),
     UnitType.UNKNOWN: ("#9e9e9e", "dot", "❓", 16),
 }
@@ -94,6 +104,16 @@ def classify_ou(ou):
         return UnitType.SOCIETY
     if "division" in desc:
         return UnitType.DIVISION
+    if "academic" in desc:  # universities / colleges
+        return UnitType.ACADEMIC
+    if "committee" in desc:
+        return UnitType.COMMITTEE
+    if "board" in desc:
+        return UnitType.BOARD
+    if "community" in desc:
+        return UnitType.COMMUNITY
+    if "local group" in desc:
+        return UnitType.LOCAL_GROUP
 
     # Fall back to SPOID-based classification if the description is unhelpful.
     return classify_spoid(ou.spoid)
@@ -125,6 +145,14 @@ def classify_spoid(spoid):
         return UnitType.STUDENT_BRANCH
     if code.startswith("ARR"):  # Area SPOIDs, e.g. ARR0602
         return UnitType.AREA
+    if code.startswith("LGR"):  # Local Group SPOIDs, e.g. LGR60007VL
+        return UnitType.LOCAL_GROUP
+    # Academic units (universities): "A" + digits, or digits + dash, e.g.
+    # A8636, 1-SG21PW.
+    if code[:1] == "A" and code[1:2].isdigit():
+        return UnitType.ACADEMIC
+    if code[:1].isdigit() and "-" in code and code.split("-")[0].isdigit():
+        return UnitType.ACADEMIC
     if code.startswith(AFFINITY_PREFIXES):
         return UnitType.AFFINITY
 
