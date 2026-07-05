@@ -19,14 +19,24 @@ Deploy:       point Streamlit Community Cloud at this file.
 """
 
 import concurrent.futures
+import csv
 import logging
+from pathlib import Path
 
 import streamlit as st
 import urllib3
+from streamlit_searchbox import st_searchbox
 
 import ouclient
 import outype
+from ouclient import OU
 from outype import UnitType
+
+# Pre-built name-search index (spoid,name,type of active units); see
+# build_index.py. Lives next to this file so it works on Streamlit Cloud.
+_INDEX_PATH = Path(__file__).parent / "units.csv"
+_SEARCH_MIN_CHARS = 3
+_SEARCH_LIMIT = 50
 
 logging.basicConfig(level=logging.INFO)
 
@@ -131,11 +141,47 @@ def region_names():
     return out
 
 
+@st.cache_data(show_spinner=False)
+def load_index():
+    """Load the name-search index once, with names lowercased for matching."""
+    rows = []
+    if not _INDEX_PATH.exists():
+        return rows
+    with open(_INDEX_PATH, newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            spoid = (r.get("spoid") or "").strip()
+            name = (r.get("name") or "").strip()
+            if not spoid or not name:
+                continue
+            _c, _s, emoji, _z = outype.style_for(
+                outype.classify_ou(OU(spoid=spoid, type_desc=r.get("type", ""))))
+            rows.append({"spoid": spoid, "name": name,
+                         "name_lower": name.lower(),
+                         "label": f"{emoji} {name} ({spoid})"})
+    return rows
+
+
+def search_units(query):
+    """st_searchbox callback: units whose name contains the query (>=3 chars).
+
+    Prefix matches rank first, then alphabetical; capped at _SEARCH_LIMIT.
+    Returns (label, spoid) tuples so selecting a result yields its SPOID.
+    """
+    q = (query or "").strip().lower()
+    if len(q) < _SEARCH_MIN_CHARS:
+        return []
+    matches = [r for r in load_index() if q in r["name_lower"]]
+    matches.sort(key=lambda r: (not r["name_lower"].startswith(q),
+                                r["name_lower"]))
+    return [(r["label"], r["spoid"]) for r in matches[:_SEARCH_LIMIT]]
+
+
 def init_state():
     if "current" not in st.session_state:
         st.session_state.current = None
         st.session_state.ou_cache = {}
         st.session_state.view = "main"
+        st.session_state.last_search = None
 
 
 def fetch_ous(spoids):
@@ -415,6 +461,16 @@ with st.sidebar:
     if col_b.button("Reset", use_container_width=True):
         st.session_state.current = None
         st.session_state.ou_cache = {}
+
+    # Type-ahead search by unit name (>=3 letters), backed by units.csv.
+    if load_index():
+        picked = st_searchbox(search_units, key="unit_search",
+                              placeholder="...or search by name (3+ letters)",
+                              label="Search by name")
+        if picked and picked != st.session_state.last_search:
+            st.session_state.last_search = picked
+            st.session_state.current = picked
+            st.session_state.view = "main"
 
     st.divider()
     st.header("Filter")
