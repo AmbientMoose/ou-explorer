@@ -105,12 +105,12 @@ Then open the URL Streamlit prints (usually http://localhost:8501).
 - **Deep links:** append `?ou=<SPOID>` to the app URL to open directly on that
   unit, e.g. `https://ou-explore.streamlit.app/?ou=R60007`. The URL stays in
   sync as you navigate, so it's shareable/bookmarkable at any point.
-- **Download this view:** the *Download* button (top of the unit view) exports
-  the parents, the unit, and the children currently shown, in your choice of
+- **Download this view:** the *Download* button exports the unit, its parents
+  and children, the officer roster, and the data-source links, in your choice of
   **Text**, **JSON**, or **PDF** (named after the unit, e.g. `OU_Boise_Section`).
-  In the PDF each parent/child is a clickable link back into this app
-  (`?ou=<SPOID>`), plus the selected unit's website; text and JSON include the
-  same URLs as plain text. The unit's officer roster is included.
+  In the PDF everything is clickable -- a link to the unit itself and to each
+  parent/child (`?ou=<SPOID>`), the unit's website, and the OU List API /
+  WebInABox data sources; text and JSON include the same URLs as plain text.
 - **Supplemented rows (†):** the parent/child lists are completed with edges the
   OU List API omits, taken from `reciprocity_violations.csv`. Rows added this
   way are marked with a dagger and a hover note. (For example, viewing IEEE
@@ -120,10 +120,11 @@ Then open the URL Streamlit prints (usually http://localhost:8501).
   child units. "Other" and "Grouping" units are hidden by default. When units
   are hidden, each list notes how many and of which types, e.g. "94 units
   hidden by the type filter (88 groupings, 6 other)."
-- **Details:** the boxed middle section shows the selected unit's name, type,
-  website, its societies/sections/regions/divisions, and -- when the unit
-  publishes one -- an **Officers** link that opens a formatted roster of the
-  unit's officers (position and name).
+- **Page layout:** the unit's own details come first (name, type, website, and
+  its societies/sections/regions/divisions), followed by its **Parents**,
+  **Children**, an **Officers** roster (position + name), and a **Data Sources**
+  section linking the OU List API and WebInABox Unit Details feeds used to
+  populate the page.
 
 ## Files
 

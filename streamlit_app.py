@@ -245,7 +245,6 @@ def search_units(query):
 def init_state():
     if "current" not in st.session_state:
         st.session_state.current = None
-        st.session_state.view = "main"
         st.session_state.last_search = None
 
 
@@ -294,15 +293,6 @@ def type_for(spoid, hints, ou_cache):
 
 def go_to(spoid):
     st.session_state.current = spoid
-    st.session_state.view = "main"
-
-
-def show_officers():
-    st.session_state.view = "officers"
-
-
-def show_main():
-    st.session_state.view = "main"
 
 
 def load_from_fields():
@@ -315,7 +305,6 @@ def load_from_fields():
     target = target or st.session_state.get("region_select") or ""
     if target:
         st.session_state.current = target
-        st.session_state.view = "main"
 
 
 def on_region_change():
@@ -441,12 +430,6 @@ def render_selected(ou):
             st.write(f"Type: {unit_type.value}")
         if ou.url:
             st.markdown(f"[Website]({ou.url})")
-        api_url = f"{ouclient.OU_LIST_URL}?spoid={ou.spoid}"
-        st.markdown(f"[OU List API]({api_url})")
-        # Show an Officers link only when a published officer list exists.
-        if load_officers(ou.spoid):
-            st.button("Officers", type="tertiary", key="officers_link",
-                      on_click=show_officers)
         extras = []
         if ou.society_spoids:
             extras.append("Societies: " + ", ".join(ou.society_spoids))
@@ -485,6 +468,8 @@ def build_report(ou, parents_shown, parents_hidden, children_shown,
         "unit": {
             "spoid": ou.spoid, "name": ou.name,
             "type": outype.classify_ou(ou).value, "status": ou.status_desc,
+            # Link back to this unit in the app, plus its website.
+            "url": f"{APP_URL}/?ou={ou.spoid}",
             "website_url": ou.url or None,
             "societies": ou.society_spoids, "sections": ou.section_spoids,
             "regions": ou.region_spoids, "divisions": ou.division_spoids,
@@ -495,6 +480,10 @@ def build_report(ou, parents_shown, parents_hidden, children_shown,
         "children_hidden": len(children_hidden),
         "officers": [{"position": o["position"], "name": o["name"]}
                      for o in load_officers(ou.spoid)],
+        "data_sources": {
+            "ou_list_api": f"{ouclient.OU_LIST_URL}?spoid={ou.spoid}",
+            "webinabox_unit_details": f"{ouclient.OFFICERS_URL}{ou.spoid}",
+        },
     }
 
 
@@ -518,9 +507,9 @@ def render_download_button(ou, rpt):
     report_json = json.dumps(rpt, ensure_ascii=False)
     txt, js, pdf = render_downloads(report_json)
     fname = _safe_filename(ou.name, ou.spoid)
-    with st.popover("⬇ Download this view", use_container_width=False):
-        st.caption("Parents, this unit, and children as shown. Choose a "
-                   "format:")
+    with st.popover("⬇ Download", use_container_width=True):
+        st.caption("This view (unit, parents, children, officers, sources) "
+                   "as:")
         st.download_button("Text (.txt)", txt, file_name=fname + ".txt",
                            mime="text/plain", use_container_width=True,
                            key="dl_txt")
@@ -532,20 +521,22 @@ def render_download_button(ou, rpt):
                            key="dl_pdf")
 
 
-def render_officers_page(ou):
-    """A dedicated page listing the selected unit's officers."""
-    st.button("← Back", key="officers_back", on_click=show_main)
-    unit_type = outype.classify_ou(ou)
-    _c, _s, emoji, _z = outype.style_for(unit_type)
-    st.header(f"{emoji} Officers")
-    st.markdown(f"**{ou.name}**  \n`{ou.spoid}`")
-
+def render_officers_section(ou):
     officers = load_officers(ou.spoid)
+    st.subheader(f"Officers ({len(officers)})")
     if not officers:
-        st.info("No officer list is available for this unit.")
+        st.caption("None available.")
         return
     st.table([{"Position": o["position"], "Name": o["name"]}
               for o in officers])
+
+
+def render_data_sources(ou):
+    """Links to the public APIs used to populate this unit's page."""
+    st.subheader("Data Sources")
+    st.markdown(f"[OU List API]({ouclient.OU_LIST_URL}?spoid={ou.spoid})")
+    st.markdown(
+        f"[WebInABox Unit Details]({ouclient.OFFICERS_URL}{ou.spoid})")
 
 
 # --------------------------------------------------------------------------- #
@@ -558,12 +549,6 @@ if not st.session_state.get("url_adopted"):
     _ou_param = st.query_params.get("ou")
     if _ou_param:
         st.session_state.current = _ou_param.strip().upper()
-
-st.title("🌐 IEEE OU Explorer")
-st.caption(
-    "Navigate the parent/child structure of IEEE Organizational Units. "
-    "Click any parent or child to move to it."
-)
 
 # Tighten the tertiary-button rows into a compact, single-spaced list.
 st.markdown(
@@ -597,15 +582,6 @@ st.markdown(
     div[data-testid="stButton"] [data-testid="stTooltipHoverTarget"] {
         display: block;
     }
-    /* Officers: style the button as a hyperlink so it's obviously clickable,
-       matching the Website / OU List API links above it. */
-    .st-key-officers_link { margin-top: 0 !important; margin-bottom: 0 !important; }
-    .st-key-officers_link button[kind="tertiary"] {
-        color: #00629B !important;
-        text-decoration: underline !important;
-        padding: 0 !important;
-    }
-    .st-key-officers_link button[kind="tertiary"]:hover { color: #004b75 !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -641,7 +617,6 @@ with st.sidebar:
         if picked and picked != st.session_state.last_search:
             st.session_state.last_search = picked
             st.session_state.current = picked
-            st.session_state.view = "main"
 
     st.divider()
     st.header("Filter")
@@ -673,15 +648,15 @@ if current:
 elif "ou" in st.query_params:
     del st.query_params["ou"]
 
-if not current:
-    st.info("Pick a Region (or enter a SPOID) in the sidebar and press "
-            "**Load** to begin, or use **Search by name** to find a unit.")
-else:
+# Load the current unit and build its report before the header, so the Download
+# button can sit to the right of the title.
+ou = None
+rpt = None
+load_error = None
+if current:
     ou = load_ou(resolve_spoid(current))
     if ou is None:
-        st.error(f"No OU found for SPOID '{current}'.")
-    elif st.session_state.view == "officers":
-        render_officers_page(ou)
+        load_error = f"No OU found for SPOID '{current}'."
     else:
         hints = hint_map(ou)
         # Supplement the API's parent/child lists with known-omitted edges.
@@ -690,26 +665,40 @@ else:
             ou.parents, extra_parents.get(resolve_spoid(ou.spoid), []))
         children_list, child_supp = merge_supplement(
             ou.children, extra_children.get(resolve_spoid(ou.spoid), []))
-        supp_all = parent_supp | child_supp
-
         # Resolve every listed unit's name/type from the index + supplement --
         # no per-neighbour API calls. Units absent from both are dropped.
-        ou_cache = neighbor_cache(parents_list + children_list, supp_all)
-
-        # Compute the displayed (filtered + sorted) lists once, for both the UI
-        # and the downloadable report.
+        ou_cache = neighbor_cache(parents_list + children_list,
+                                  parent_supp | child_supp)
+        # Displayed (filtered + sorted) lists -- for both the UI and the report.
         parents_shown, parents_hidden = filter_and_sort(
             parents_list, hints, ou_cache, visible_types, sort_by)
         children_shown, children_hidden = filter_and_sort(
             children_list, hints, ou_cache, visible_types, sort_by)
-
         rpt = build_report(ou, parents_shown, parents_hidden, children_shown,
                            children_hidden, ou_cache)
-        render_download_button(ou, rpt)
 
-        render_unit_list("Parents", parents_shown, parents_hidden, hints,
-                         ou_cache, sort_by, "par", parent_supp)
-        render_selected(ou)
-        render_unit_list(f"Children ({len(children_list)})", children_shown,
-                         children_hidden, hints, ou_cache, sort_by, "chi",
-                         child_supp)
+# Header: title, with the Download button to its right when a unit is loaded.
+_title_col, _dl_col = st.columns([4, 1], vertical_alignment="center")
+_title_col.title("🌐 IEEE OU Explorer")
+with _dl_col:
+    if ou is not None:
+        render_download_button(ou, rpt)
+st.caption(
+    "Navigate the parent/child structure of IEEE Organizational Units. "
+    "Click any parent or child to move to it.")
+
+if not current:
+    st.info("Pick a Region (or enter a SPOID) in the sidebar and press "
+            "**Load** to begin, or use **Search by name** to find a unit.")
+elif load_error:
+    st.error(load_error)
+else:
+    # Layout: unit info, then parents, children, officers, data sources.
+    render_selected(ou)
+    render_unit_list("Parents", parents_shown, parents_hidden, hints,
+                     ou_cache, sort_by, "par", parent_supp)
+    render_unit_list(f"Children ({len(children_list)})", children_shown,
+                     children_hidden, hints, ou_cache, sort_by, "chi",
+                     child_supp)
+    render_officers_section(ou)
+    render_data_sources(ou)

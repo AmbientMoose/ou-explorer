@@ -80,6 +80,8 @@ def render_text(report):
     if u.get("status"):
         line += f" - {u['status']}"
     out.append(line)
+    if u.get("url"):
+        out.append(f"  Open in OU Explorer: {u['url']}")
     if u.get("website_url"):
         out.append(f"  Website: {u['website_url']}")
     for label, key in (("Societies", "societies"), ("Sections", "sections"),
@@ -107,6 +109,14 @@ def render_text(report):
         out.append("  None available.")
     for o in officers:
         out.append(f"  {o['position']}: {o['name']}")
+    out.append("")
+
+    ds = report.get("data_sources") or {}
+    out.append("DATA SOURCES")
+    if ds.get("ou_list_api"):
+        out.append(f"  OU List API: {ds['ou_list_api']}")
+    if ds.get("webinabox_unit_details"):
+        out.append(f"  WebInABox Unit Details: {ds['webinabox_unit_details']}")
     out.append("")
 
     return "\n".join(out)
@@ -163,6 +173,9 @@ def render_pdf(report):
              f" &middot; generated {escape(report.get('generated', ''))}")
     story.append(Paragraph(meta, styles["meta"]))
 
+    if u.get("url"):
+        story.append(Paragraph("Open in OU Explorer: " + _link(u["url"],
+                     u["url"]), styles["body"]))
     if u.get("website_url"):
         story.append(Paragraph("Website: " + _link(u["website_url"],
                      u["website_url"]), styles["body"]))
@@ -192,6 +205,16 @@ def render_pdf(report):
     for o in officers:
         story.append(Paragraph(
             f"{escape(o['position'])}: {escape(o['name'])}", styles["row"]))
+
+    ds = report.get("data_sources") or {}
+    story.append(Paragraph("Data Sources", styles["h2"]))
+    if ds.get("ou_list_api"):
+        story.append(Paragraph("OU List API: " + _link(
+            ds["ou_list_api"], ds["ou_list_api"]), styles["body"]))
+    if ds.get("webinabox_unit_details"):
+        story.append(Paragraph("WebInABox Unit Details: " + _link(
+            ds["webinabox_unit_details"], ds["webinabox_unit_details"]),
+            styles["body"]))
 
     buf = io.BytesIO()
     SimpleDocTemplate(buf, pagesize=letter,
