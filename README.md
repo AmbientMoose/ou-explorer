@@ -102,6 +102,15 @@ Then open the URL Streamlit prints (usually http://localhost:8501).
   live-narrowing list of active units whose name contains that text; pick one
   to jump to it. Prefix matches rank first.
 - **Navigate:** click any parent or child row to move to that unit.
+- **Deep links:** append `?ou=<SPOID>` to the app URL to open directly on that
+  unit, e.g. `https://ou-explore.streamlit.app/?ou=R60007`. The URL stays in
+  sync as you navigate, so it's shareable/bookmarkable at any point.
+- **Download this view:** the *Download* button (top of the unit view) exports
+  the parents, the unit, and the children currently shown, in your choice of
+  **Text**, **JSON**, or **PDF** (named after the unit, e.g. `OU_Boise_Section`).
+  In the PDF each parent/child is a clickable link back into this app
+  (`?ou=<SPOID>`), plus the selected unit's website; text and JSON include the
+  same URLs as plain text. The unit's officer roster is included.
 - **Supplemented rows (†):** the parent/child lists are completed with edges the
   OU List API omits, taken from `reciprocity_violations.csv`. Rows added this
   way are marked with a dagger and a hover note. (For example, viewing IEEE
@@ -123,6 +132,7 @@ Then open the URL Streamlit prints (usually http://localhost:8501).
 | `streamlit_app.py` | Streamlit UI: sidebar controls, parent/self/child list view |
 | `ouclient.py`      | OU List API client and response parsing (`OU` dataclass)    |
 | `outype.py`        | Unit-type classification and per-type colour/shape/emoji    |
+| `report.py`        | Renders the current view to downloadable text / JSON / PDF  |
 | `build_index.py`   | Crawls the OU graph to build the `units.csv` search index   |
 | `units.csv`        | Pre-built name-search index (active units: spoid, name, type) |
 | `check_reciprocity.py` | Audits OU List data for non-reciprocal parent/child links |

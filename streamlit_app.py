@@ -20,7 +20,9 @@ Deploy:       point Streamlit Community Cloud at this file.
 
 import concurrent.futures
 import csv
+import json
 import logging
+from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
@@ -29,6 +31,7 @@ from streamlit_searchbox import st_searchbox
 
 import ouclient
 import outype
+import report as report_mod
 from ouclient import OU
 from outype import UnitType
 
@@ -43,6 +46,10 @@ _SEARCH_LIMIT = 50
 _RECIP_PATH = Path(__file__).parent / "reciprocity_violations.csv"
 # Marks parent/child rows that came from the supplement rather than the API.
 _SUPP_MARK = " †"  # dagger
+
+# Deployed app URL, used to build shareable ?ou= deep links in downloaded
+# reports. Update if the app moves.
+APP_URL = "https://ou-explore.streamlit.app"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -379,37 +386,43 @@ def hidden_breakdown(hidden_types):
     return ", ".join(_plural(t, c) for t, c in items)
 
 
-def render_unit_list(title, spoids, hints, ou_cache, visible_types, sort_by,
-                     key_prefix, supp_ids=frozenset()):
-    st.subheader(title)
-    # Includable = present in the index/supplement (active); of those, some may
-    # be hidden solely because their type is not in the current filter. A unit
-    # absent from the index is treated as inactive and dropped (has_data False).
+def filter_and_sort(spoids, hints, ou_cache, visible_types, sort_by):
+    """The displayed subset of a parent/child list, plus the filtered-out types.
+
+    Includable = present in the index/supplement (active); a unit absent from
+    the index is treated as inactive and dropped (has_data False). Of the
+    includable units, some may be hidden solely by the type filter.
+    """
     candidates = [s for s in spoids
                   if has_data(s, ou_cache) and not is_inactive(s, ou_cache)]
     typed = [(s, type_for(s, hints, ou_cache)) for s in candidates]
-    shown = [s for s, t in typed if t in visible_types]
+    shown = sort_spoids([s for s, t in typed if t in visible_types],
+                        ou_cache, sort_by)
     hidden_types = [t for s, t in typed if t not in visible_types]
-    hidden = len(hidden_types)
-    shown = sort_spoids(shown, ou_cache, sort_by)
+    return shown, hidden_types
 
-    if not candidates:
+
+def render_unit_list(title, shown, hidden_types, hints, ou_cache, sort_by,
+                     key_prefix, supp_ids=frozenset()):
+    st.subheader(title)
+    if not shown and not hidden_types:
         st.caption("None.")
-    else:
-        any_supp = False
-        for i, spoid in enumerate(shown):
-            supplemented = resolve_spoid(spoid) in supp_ids
-            any_supp = any_supp or supplemented
-            nav_row(spoid, type_for(spoid, hints, ou_cache),
-                    name_of(spoid, ou_cache), sort_by, supplemented,
-                    key=f"{key_prefix}_{i}_{spoid}")
-        if any_supp:
-            st.caption(f"{_SUPP_MARK.strip()} added from the reciprocity "
-                       "supplement (not returned by the OU List API).")
-        if hidden:
-            word = "unit" if hidden == 1 else "units"
-            st.caption(f"{hidden} {word} hidden by the type filter "
-                       f"({hidden_breakdown(hidden_types)}).")
+        return
+    any_supp = False
+    for i, spoid in enumerate(shown):
+        supplemented = resolve_spoid(spoid) in supp_ids
+        any_supp = any_supp or supplemented
+        nav_row(spoid, type_for(spoid, hints, ou_cache),
+                name_of(spoid, ou_cache), sort_by, supplemented,
+                key=f"{key_prefix}_{i}_{spoid}")
+    if any_supp:
+        st.caption(f"{_SUPP_MARK.strip()} added from the reciprocity "
+                   "supplement (not returned by the OU List API).")
+    if hidden_types:
+        hidden = len(hidden_types)
+        word = "unit" if hidden == 1 else "units"
+        st.caption(f"{hidden} {word} hidden by the type filter "
+                   f"({hidden_breakdown(hidden_types)}).")
 
 
 def render_selected(ou):
@@ -447,6 +460,78 @@ def render_selected(ou):
             st.caption(line)
 
 
+def build_report(ou, parents_shown, parents_hidden, children_shown,
+                 children_hidden, ou_cache):
+    """Assemble a JSON-serializable report of the current view for download.
+
+    Key order matches the text layout: app, title, generated, unit, parents,
+    children, officers.
+    """
+
+    def entry(spoid):
+        nou = ou_cache.get(spoid)
+        utype = (outype.classify_ou(nou) if nou is not None
+                 else outype.classify_spoid(spoid))
+        return {"spoid": spoid,
+                "name": nou.name if nou is not None else "",
+                "type": utype.value,
+                # Row links open the unit in this app (a shareable deep link).
+                "url": f"{APP_URL}/?ou={spoid}"}
+
+    return {
+        "app": "IEEE OU Explorer",
+        "title": f"{ou.name} ({ou.spoid})",
+        "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "unit": {
+            "spoid": ou.spoid, "name": ou.name,
+            "type": outype.classify_ou(ou).value, "status": ou.status_desc,
+            "website_url": ou.url or None,
+            "societies": ou.society_spoids, "sections": ou.section_spoids,
+            "regions": ou.region_spoids, "divisions": ou.division_spoids,
+        },
+        "parents": [entry(s) for s in parents_shown],
+        "parents_hidden": len(parents_hidden),
+        "children": [entry(s) for s in children_shown],
+        "children_hidden": len(children_hidden),
+        "officers": [{"position": o["position"], "name": o["name"]}
+                     for o in load_officers(ou.spoid)],
+    }
+
+
+@st.cache_data(show_spinner=False)
+def render_downloads(report_json):
+    """Render the report to (text, json, pdf), cached on the report content."""
+    rpt = json.loads(report_json)
+    return (report_mod.render_text(rpt), report_mod.render_json(rpt),
+            report_mod.render_pdf(rpt))
+
+
+def _safe_filename(name, fallback):
+    """Filesystem-safe stem from a unit name, e.g. 'Boise Section' -> 'OU_Boise_Section'."""
+    cleaned = "".join(c if c.isalnum() else "_" for c in (name or ""))
+    cleaned = "_".join(part for part in cleaned.split("_") if part)[:80].strip("_")
+    return f"OU_{cleaned or fallback}"
+
+
+def render_download_button(ou, rpt):
+    # No sort_keys: preserve build_report's key order in the JSON output.
+    report_json = json.dumps(rpt, ensure_ascii=False)
+    txt, js, pdf = render_downloads(report_json)
+    fname = _safe_filename(ou.name, ou.spoid)
+    with st.popover("⬇ Download this view", use_container_width=False):
+        st.caption("Parents, this unit, and children as shown. Choose a "
+                   "format:")
+        st.download_button("Text (.txt)", txt, file_name=fname + ".txt",
+                           mime="text/plain", use_container_width=True,
+                           key="dl_txt")
+        st.download_button("JSON (.json)", js, file_name=fname + ".json",
+                           mime="application/json", use_container_width=True,
+                           key="dl_json")
+        st.download_button("PDF (.pdf)", pdf, file_name=fname + ".pdf",
+                           mime="application/pdf", use_container_width=True,
+                           key="dl_pdf")
+
+
 def render_officers_page(ou):
     """A dedicated page listing the selected unit's officers."""
     st.button("← Back", key="officers_back", on_click=show_main)
@@ -466,6 +551,13 @@ def render_officers_page(ou):
 # --------------------------------------------------------------------------- #
 
 init_state()
+
+# Deep link: on first load, a ?ou=<SPOID> query parameter selects that unit.
+if not st.session_state.get("url_adopted"):
+    st.session_state.url_adopted = True
+    _ou_param = st.query_params.get("ou")
+    if _ou_param:
+        st.session_state.current = _ou_param.strip().upper()
 
 st.title("🌐 IEEE OU Explorer")
 st.caption(
@@ -574,6 +666,13 @@ with st.sidebar:
 
 current = st.session_state.current
 
+# Keep the URL's ?ou= in sync with the selected unit so it's shareable.
+if current:
+    if st.query_params.get("ou") != current:
+        st.query_params["ou"] = current
+elif "ou" in st.query_params:
+    del st.query_params["ou"]
+
 if not current:
     st.info("Pick a Region (or enter a SPOID) in the sidebar and press "
             "**Load** to begin, or use **Search by name** to find a unit.")
@@ -597,9 +696,20 @@ else:
         # no per-neighbour API calls. Units absent from both are dropped.
         ou_cache = neighbor_cache(parents_list + children_list, supp_all)
 
-        render_unit_list("Parents", parents_list, hints, ou_cache,
-                         visible_types, sort_by, "par", parent_supp)
+        # Compute the displayed (filtered + sorted) lists once, for both the UI
+        # and the downloadable report.
+        parents_shown, parents_hidden = filter_and_sort(
+            parents_list, hints, ou_cache, visible_types, sort_by)
+        children_shown, children_hidden = filter_and_sort(
+            children_list, hints, ou_cache, visible_types, sort_by)
+
+        rpt = build_report(ou, parents_shown, parents_hidden, children_shown,
+                           children_hidden, ou_cache)
+        render_download_button(ou, rpt)
+
+        render_unit_list("Parents", parents_shown, parents_hidden, hints,
+                         ou_cache, sort_by, "par", parent_supp)
         render_selected(ou)
-        render_unit_list(f"Children ({len(children_list)})", children_list,
-                         hints, ou_cache, visible_types, sort_by, "chi",
+        render_unit_list(f"Children ({len(children_list)})", children_shown,
+                         children_hidden, hints, ou_cache, sort_by, "chi",
                          child_supp)
